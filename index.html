@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AI廚師 by 日本實Q</title>
     
+    <!-- 設定 App Icon (請確保 icon.png 在同一目錄下) -->
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="apple-touch-icon" href="icon.png">
+    
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -31,7 +35,6 @@
         const { useState, useEffect, useRef } = React;
 
         // --- Helper: Image Compression ---
-        // This prevents mobile browsers from crashing due to high memory usage with large photos
         const compressImage = (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -41,7 +44,7 @@
                     img.src = event.target.result;
                     img.onload = () => {
                         const canvas = document.createElement('canvas');
-                        const MAX_WIDTH = 1024; // Limit resolution
+                        const MAX_WIDTH = 1024; 
                         const MAX_HEIGHT = 1024;
                         let width = img.width;
                         let height = img.height;
@@ -63,7 +66,6 @@
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(img, 0, 0, width, height);
                         
-                        // Compress to JPEG with 0.7 quality
                         const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
                         resolve(dataUrl);
                     };
@@ -292,8 +294,6 @@
                     compressedImages.push(compressedBase64);
                 } catch (err) {
                     console.error("Image compression failed", err);
-                    // Fallback to reading original file if compression fails? 
-                    // Or just skip. Let's try to continue.
                 }
             }
 
@@ -302,7 +302,7 @@
             } else {
               setSeasoningImgs(prev => {
                  const newImgs = [...prev, ...compressedImages].slice(0, MAX_IMAGES);
-                 // Safely store in localStorage (still might be too big if many imgs, but compression helps)
+                 // Safely store in localStorage
                  try {
                      localStorage.setItem('seasoning_imgs', JSON.stringify(newImgs));
                  } catch (e) {
