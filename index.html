@@ -19,10 +19,7 @@
     <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Libraries for Export -->
-    <!-- PDF Generation -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-    <!-- Excel Generation (SheetJS) -->
+    <!-- Excel Generation (SheetJS) Only -->
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
 
     <!-- App Styles -->
@@ -32,8 +29,9 @@
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
         .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
         
-        /* Print/Export Styles */
-        .page-break { page-break-after: always; break-after: page; }
+        /* Modal Animation */
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .animate-fade-in { animation: fadeIn 0.2s ease-out; }
     </style>
 </head>
 <body class="bg-[#F8F9FA]">
@@ -73,7 +71,6 @@
                         canvas.height = height;
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(img, 0, 0, width, height);
-                        
                         const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
                         resolve(dataUrl);
                     };
@@ -83,7 +80,6 @@
             });
         };
 
-        // --- Helper: Date Formatting ---
         const getFormatDate = (start, offset, lang) => {
             const date = new Date(start);
             date.setDate(date.getDate() + offset);
@@ -94,155 +90,195 @@
             });
         };
 
-        // --- Export Functions ---
+        // --- EXPORT FUNCTIONS (REFINED) ---
 
-        // 1. Excel Export (One sheet per day)
-        const exportExcel = (data, startDate, lang) => {
+        // 1. Excel Export (With Mode Selection)
+        const exportExcel = (data, startDate, lang, mode) => {
+            // mode: 'sheets' (default) or 'one_sheet'
             const wb = XLSX.utils.book_new();
             
-            data.schedule.forEach((dayPlan, index) => {
-                const dateStr = getFormatDate(startDate, index, lang);
-                const sheetName = `Day ${dayPlan.day}`;
-                
-                // Define headers and data structure
-                const ws_data = [
-                    [`${dateStr} - Day ${dayPlan.day}`],
-                    ["餐點 (Meal)", "菜色 (Dish)", "材料 (Ingredients)", "調味 (Seasoning)", "做法 (Steps)"],
-                ];
-
-                ['breakfast', 'lunch', 'dinner'].forEach(type => {
-                    const meal = dayPlan.meals[type];
-                    if (meal && meal.name) {
-                        ws_data.push([
-                            type.toUpperCase(),
-                            meal.name,
-                            meal.ingredients,
-                            meal.seasoning,
-                            meal.steps
-                        ]);
-                    } else {
-                         ws_data.push([type.toUpperCase(), "N/A", "", "", ""]);
-                    }
-                });
-
-                const ws = XLSX.utils.aoa_to_sheet(ws_data);
-                
-                // Styling width (basic)
-                ws['!cols'] = [{wch:15}, {wch:20}, {wch:30}, {wch:20}, {wch:50}];
-
-                XLSX.utils.book_append_sheet(wb, ws, sheetName);
-            });
-
-            // Summary Sheet
-            const summary_data = [
-                ["類別", "項目"],
-                ["需用食材", ...data.summary.ingredients_list],
-                ["", ""],
-                ["需用調味", ...data.summary.seasonings_list]
+            // --- Summary Sheet (Always First) ---
+            const summaryRows = [
+                ["總覽 Summary", ""],
+                ["類別 Type", "項目 Item"],
             ];
-            // Since data structures are arrays, let's map them properly
-            const formattedSummary = [
-                ["總覽 Summary"],
-                ["類型 Type", "項目 Item"]
-            ];
-            data.summary.ingredients_list.forEach(item => formattedSummary.push(["食材", item]));
-            data.summary.seasonings_list.forEach(item => formattedSummary.push(["調味", item]));
-            
-            const ws_summary = XLSX.utils.aoa_to_sheet(formattedSummary);
+            data.summary.ingredients_list.forEach(i => summaryRows.push(["需用食材", i]));
+            summaryRows.push(["", ""]); 
+            data.summary.seasonings_list.forEach(i => summaryRows.push(["需用調味", i]));
+
+            const ws_summary = XLSX.utils.aoa_to_sheet(summaryRows);
+            ws_summary['!cols'] = [{wch:20}, {wch:50}];
             XLSX.utils.book_append_sheet(wb, ws_summary, "Summary");
 
-            XLSX.writeFile(wb, "SmartKitchenPlan.xlsx");
+            if (mode === 'one_sheet') {
+                // --- MODE: All Days in One Sheet ---
+                const allData = [];
+                // Headers
+                allData.push(["日期", "Day", "餐點", "菜名", "材料", "調味", "詳細步驟"]);
+
+                data.schedule.forEach((dayPlan, index) => {
+                    const dateStr = getFormatDate(startDate, index, lang);
+                    
+                    ['breakfast', 'lunch', 'dinner'].forEach(type => {
+                        const meal = dayPlan.meals[type];
+                        const typeLabel = type === 'breakfast' ? '早餐' : type === 'lunch' ? '午餐' : '晚餐';
+                        
+                        if (meal && meal.name) {
+                            allData.push([
+                                dateStr,
+                                `Day ${dayPlan.day}`,
+                                typeLabel,
+                                meal.name,
+                                meal.ingredients,
+                                meal.seasoning,
+                                meal.steps
+                            ]);
+                        }
+                    });
+                    // Empty row between days for readability
+                    allData.push(["", "", "", "", "", "", ""]);
+                });
+
+                const ws_all = XLSX.utils.aoa_to_sheet(allData);
+                ws_all['!cols'] = [{wch:15}, {wch:8}, {wch:10}, {wch:25}, {wch:35}, {wch:25}, {wch:60}];
+                XLSX.utils.book_append_sheet(wb, ws_all, "Full Plan");
+
+            } else {
+                // --- MODE: One Sheet Per Day ---
+                data.schedule.forEach((dayPlan, index) => {
+                    const dateStr = getFormatDate(startDate, index, lang);
+                    const sheetName = `Day ${dayPlan.day}`;
+                    
+                    const ws_data = [
+                        [`Day ${dayPlan.day} - ${dateStr}`],
+                        ["餐點", "菜名", "材料", "調味", "詳細步驟"]
+                    ];
+
+                    ['breakfast', 'lunch', 'dinner'].forEach(type => {
+                        const meal = dayPlan.meals[type];
+                        const typeLabel = type === 'breakfast' ? '早餐' : type === 'lunch' ? '午餐' : '晚餐';
+                        
+                        if (meal && meal.name) {
+                            ws_data.push([
+                                typeLabel,
+                                meal.name,
+                                meal.ingredients,
+                                meal.seasoning,
+                                meal.steps 
+                            ]);
+                        } else {
+                             ws_data.push([typeLabel, "-", "-", "-", "-"]);
+                        }
+                    });
+
+                    const ws = XLSX.utils.aoa_to_sheet(ws_data);
+                    ws['!cols'] = [{wch:10}, {wch:25}, {wch:35}, {wch:25}, {wch:60}];
+                    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+                });
+            }
+
+            XLSX.writeFile(wb, `SmartKitchen_Plan_${mode}.xlsx`);
         };
 
-        // 2. Word Export (HTML Blob with page breaks)
+        // 2. Word Export (Strict Page Breaks using CSS + Word XML)
         const exportWord = (data, startDate, lang) => {
-            let htmlContent = `
-                <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-                <head><meta charset='utf-8'><title>Meal Plan</title>
-                <style>
-                    body { font-family: 'Microsoft JhengHei', sans-serif; }
-                    .day-container { page-break-after: always; }
-                    h1 { color: #F97316; }
-                    h2 { background-color: #eee; padding: 5px; }
-                    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-                    td, th { border: 1px solid #ccc; padding: 8px; vertical-align: top; }
-                    th { background-color: #f0f0f0; text-align: left; }
-                </style>
-                </head><body>
-            `;
+            let htmlBody = '';
+
+            // MS Word specific page break
+            const wordPageBreak = "<br clear=all style='mso-special-character:line-break;page-break-before:always'>";
 
             data.schedule.forEach((dayPlan, index) => {
                 const dateStr = getFormatDate(startDate, index, lang);
-                htmlContent += `
-                    <div class="day-container">
-                        <h1>${dateStr} (Day ${dayPlan.day})</h1>
-                        <table>
-                            <tr>
-                                <th width="15%">餐點</th>
-                                <th width="20%">菜色</th>
-                                <th width="65%">詳情</th>
-                            </tr>
+                
+                // Add page break before every day EXCEPT the first one
+                if (index > 0) {
+                    htmlBody += wordPageBreak;
+                }
+
+                htmlBody += `
+                    <div class="day-section" style="page-break-inside: avoid;">
+                        <h1 style="color: #ea580c; border-bottom: 2px solid #ea580c; font-size: 24px; margin-bottom: 15px;">Day ${dayPlan.day} - ${dateStr}</h1>
+                        <table border="1" cellpadding="8" cellspacing="0" style="width: 100%; border-collapse: collapse; font-family: 'Microsoft JhengHei', sans-serif;">
+                            <thead>
+                                <tr style="background-color: #f3f4f6;">
+                                    <th style="width: 12%; text-align: center;">餐點</th>
+                                    <th style="width: 20%; text-align: left;">菜名</th>
+                                    <th style="width: 68%; text-align: left;">詳情</th>
+                                </tr>
+                            </thead>
+                            <tbody>
                 `;
 
                 ['breakfast', 'lunch', 'dinner'].forEach(type => {
                     const meal = dayPlan.meals[type];
+                    const typeLabel = type === 'breakfast' ? '早餐' : type === 'lunch' ? '午餐' : '晚餐';
+                    
                     if(meal && meal.name) {
-                        htmlContent += `
+                        htmlBody += `
                             <tr>
-                                <td><b>${type.toUpperCase()}</b></td>
-                                <td><b>${meal.name}</b></td>
-                                <td>
-                                    <p><b>材料:</b> ${meal.ingredients}</p>
-                                    <p><b>調味:</b> ${meal.seasoning}</p>
-                                    <p><b>做法:</b><br/>${meal.steps.replace(/\n/g, '<br/>')}</p>
+                                <td style="font-weight: bold; text-align: center; vertical-align: top; background-color: #fafafa;">${typeLabel}</td>
+                                <td style="font-weight: bold; font-size: 1.1em; vertical-align: top;">${meal.name}</td>
+                                <td style="vertical-align: top;">
+                                    <div style="margin-bottom: 8px;">
+                                        <span style="font-weight: bold; color: #d97706;">📦 材料:</span> 
+                                        <span>${meal.ingredients}</span>
+                                    </div>
+                                    <div style="margin-bottom: 8px;">
+                                        <span style="font-weight: bold; color: #16a34a;">🧂 調味:</span> 
+                                        <span>${meal.seasoning}</span>
+                                    </div>
+                                    <div style="background-color: #fff7ed; border: 1px solid #ffedd5; padding: 8px; border-radius: 4px;">
+                                        <div style="font-weight: bold; color: #9a3412; margin-bottom: 4px;">👨‍🍳 步驟:</div>
+                                        <div style="white-space: pre-wrap; font-size: 0.95em; line-height: 1.4;">${meal.steps}</div>
+                                    </div>
                                 </td>
                             </tr>
                         `;
                     }
                 });
 
-                htmlContent += `</table></div>`;
+                htmlBody += `</tbody></table></div>`;
             });
 
-            // Summary at the end
-            htmlContent += `
-                <div>
-                    <h1>採購及調味總覽</h1>
-                    <h2>需用食材</h2>
-                    <ul>${data.summary.ingredients_list.map(i => `<li>${i}</li>`).join('')}</ul>
-                    <h2>需用調味</h2>
-                    <ul>${data.summary.seasonings_list.map(i => `<li>${i}</li>`).join('')}</ul>
+            // Summary Page (Always Force New Page)
+            htmlBody += wordPageBreak;
+            htmlBody += `
+                <div style="font-family: 'Microsoft JhengHei', sans-serif;">
+                    <h1 style="color: #15803d; border-bottom: 2px solid #15803d; font-size: 24px; margin-bottom: 20px;">採購及調味總覽</h1>
+                    
+                    <h2 style="background-color: #fce7f3; padding: 8px; border-left: 5px solid #db2777; margin-bottom: 10px;">🥦 需用食材</h2>
+                    <ul style="line-height: 1.6;">${data.summary.ingredients_list.map(i => `<li>${i}</li>`).join('')}</ul>
+                    
+                    <div style="height: 20px;"></div>
+
+                    <h2 style="background-color: #dcfce7; padding: 8px; border-left: 5px solid #16a34a; margin-bottom: 10px;">🧂 需用調味</h2>
+                    <ul style="line-height: 1.6;">${data.summary.seasonings_list.map(i => `<li>${i}</li>`).join('')}</ul>
                 </div>
-                </body></html>
             `;
 
-            const blob = new Blob([htmlContent], { type: 'application/msword' });
+            const fullHtml = `
+                <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+                <head>
+                    <meta charset='utf-8'>
+                    <title>Smart Kitchen Plan</title>
+                    <style>
+                        body { font-family: 'Microsoft JhengHei', sans-serif; font-size: 11pt; }
+                        table { width: 100%; border: 1px solid #ccc; }
+                        td, th { border: 1px solid #ccc; padding: 8px; }
+                    </style>
+                </head>
+                <body>${htmlBody}</body>
+                </html>
+            `;
+
+            const blob = new Blob([fullHtml], { type: 'application/msword' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = 'SmartKitchenPlan.doc';
+            link.download = `SmartKitchen_Plan_${startDate}.doc`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-        };
-
-        // 3. PDF Export
-        const exportPDF = () => {
-            const element = document.getElementById('export-container');
-            const opt = {
-                margin: 10,
-                filename: 'SmartKitchenPlan.pdf',
-                image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: { scale: 2 },
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-                pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
-            };
-            // Temporarily show the export container which is usually hidden or styled differently
-            // Actually, we can just print the current Result view but we need to ensure page breaks.
-            // A better way is to construct a hidden div specifically for PDF generation to ensure perfect "One Day One Page"
-            
-            // For simplicity in this React structure, we will target a specific div that we will add class 'pdf-export-mode' to temporarily
-            html2pdf().set(opt).from(element).save();
         };
 
 
@@ -277,7 +313,9 @@
             ExternalLink: (p) => <IconBase {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></IconBase>,
             FileText: (p) => <IconBase {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></IconBase>,
             FileSpreadsheet: (p) => <IconBase {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/></IconBase>,
-            Download: (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></IconBase>
+            Download: (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></IconBase>,
+            Layers: (p) => <IconBase {...p}><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></IconBase>,
+            Copy: (p) => <IconBase {...p}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></IconBase>
         };
 
         const TRANSLATIONS = {
@@ -317,9 +355,10 @@
             startDate: "開始日期",
             day: "第 {n} 日",
             exportTitle: "匯出食譜",
-            exportPDF: "PDF (一日一版)",
             exportWord: "Word (一日一版)",
-            exportExcel: "Excel (分Sheet)",
+            exportExcel: "Excel (選擇格式)",
+            excelModeSheets: "每日一張 Sheet",
+            excelModeOne: "全部同一張 Sheet",
             styles: {
               hk: "港式家常",
               thai: "泰式風味",
@@ -332,7 +371,7 @@
             }
           },
           en: {
-            title: "AI Chef by Japan Real Q",
+            title: "AI Chef by Japan Security Consultant",
             threadsLinkText: "Follow me on Threads",
             uploadPhotos: "Upload Photos",
             ingredientsReceipt: "Ingredients / Receipt",
@@ -367,9 +406,10 @@
             startDate: "Start Date",
             day: "Day {n}",
             exportTitle: "Export Plan",
-            exportPDF: "PDF (1 Day/Page)",
             exportWord: "Word (1 Day/Page)",
-            exportExcel: "Excel (Sheets)",
+            exportExcel: "Excel (Select Format)",
+            excelModeSheets: "One Sheet Per Day",
+            excelModeOne: "All in One Sheet",
             styles: {
               hk: "HK Style",
               thai: "Thai",
@@ -389,6 +429,7 @@
           
           const [apiKey, setApiKey] = useState('');
           const [showSettings, setShowSettings] = useState(false);
+          const [showExcelMenu, setShowExcelMenu] = useState(false);
           
           const [ingredientImgs, setIngredientImgs] = useState([]); 
           const [seasoningImgs, setSeasoningImgs] = useState([]); 
@@ -542,9 +583,6 @@
                     }
                   ]
                 }
-                
-                Note: If a specific meal type count is 0 or exhausted for a day, leave that meal slot empty/null in the JSON.
-                Make sure quantities are precise (grams, tbsp, tsp).
               `;
 
               const imageParts = [...ingredientImgs, ...seasoningImgs].map(img => ({
@@ -580,7 +618,7 @@
             }
           };
 
-          // --- Components ---
+          // --- UI Components ---
           const PhotoUploader = ({ title, images, onUpload, onRemove, type }) => (
             <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm">
                 <div className="flex justify-between items-center mb-4">
@@ -660,8 +698,6 @@
                           <p className="text-[10px] text-gray-400 font-bold mb-0.5">{t.flavor}</p>
                           <p className="text-xs text-gray-700 leading-snug">{data.seasoning}</p>
                       </div>
-                      
-                      {/* Updated: Steps are always visible */}
                       {data.steps && (
                           <div className="mt-2 pt-2 border-t border-gray-100">
                              <p className="text-[10px] text-gray-400 font-bold mb-1 flex items-center gap-1">
@@ -713,7 +749,7 @@
                   <div className="flex flex-col">
                       <h1 className="text-lg font-extrabold text-gray-800 leading-tight">{t.title}</h1>
                       <a 
-                        href="https://www.threads.net/@replace_with_your_id" 
+                        href="https://www.threads.net/@________156.4" 
                         target="_blank" 
                         rel="noreferrer"
                         className="text-[10px] text-gray-500 flex items-center gap-1 hover:text-blue-500 transition-colors mt-0.5"
@@ -747,6 +783,37 @@
                             <button onClick={() => setShowSettings(false)} className="py-3 bg-gray-100 text-gray-700 rounded-xl font-bold">{t.cancel}</button>
                             <button onClick={() => saveApiKey(apiKey)} className="py-3 bg-gray-900 text-white rounded-xl font-bold">{t.save}</button>
                         </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Excel Selection Modal */}
+              {showExcelMenu && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setShowExcelMenu(false)}>
+                  <div className="bg-white rounded-3xl w-full max-w-xs p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+                    <h2 className="text-lg font-bold mb-4 text-center text-gray-800">{t.exportExcel}</h2>
+                    <div className="flex flex-col gap-3">
+                        <button 
+                            onClick={() => { exportExcel(resultData, startDate, lang, 'sheets'); setShowExcelMenu(false); }}
+                            className="flex items-center gap-3 p-4 bg-green-50 text-green-700 rounded-xl hover:bg-green-100 transition-colors border border-green-100"
+                        >
+                            <Icons.Layers size={24} />
+                            <div className="text-left">
+                                <div className="font-bold text-sm">{t.excelModeSheets}</div>
+                                <div className="text-[10px] opacity-70">Day 1, Day 2...</div>
+                            </div>
+                        </button>
+                        <button 
+                            onClick={() => { exportExcel(resultData, startDate, lang, 'one_sheet'); setShowExcelMenu(false); }}
+                            className="flex items-center gap-3 p-4 bg-blue-50 text-blue-700 rounded-xl hover:bg-blue-100 transition-colors border border-blue-100"
+                        >
+                            <Icons.Copy size={24} />
+                            <div className="text-left">
+                                <div className="font-bold text-sm">{t.excelModeOne}</div>
+                                <div className="text-[10px] opacity-70">All days in 1 list</div>
+                            </div>
+                        </button>
                     </div>
                   </div>
                 </div>
@@ -830,7 +897,7 @@
                     
                     <div className="space-y-6">
                         {resultData.schedule.map((dayPlan, index) => (
-                            <div key={index} className="space-y-2 page-break">
+                            <div key={index} className="space-y-2">
                                 <div className="flex items-center gap-2 px-1 pt-4">
                                     <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-lg text-sm font-bold shadow-sm">{getFormatDate(startDate, index, lang)}</span>
                                     <div className="h-px bg-gray-200 flex-1"></div>
@@ -844,7 +911,7 @@
                         ))}
                     </div>
 
-                    <div className="bg-white rounded-3xl p-6 border border-gray-200 shadow-sm mt-8 page-break">
+                    <div className="bg-white rounded-3xl p-6 border border-gray-200 shadow-sm mt-8">
                         <div className="flex items-center gap-2 mb-6 border-b border-gray-100 pb-4">
                             <Icons.List className="text-gray-400"/>
                             <h3 className="text-lg font-bold text-gray-800">{t.summaryTitle}</h3>
@@ -865,27 +932,19 @@
                         </div>
                     </div>
 
-                    {/* EXPORT BUTTONS ROW */}
                     <div className="py-6 flex flex-col gap-4 border-t border-gray-100 mt-6" data-html2canvas-ignore>
                         <h3 className="text-center text-sm font-bold text-gray-400 uppercase tracking-widest">{t.exportTitle}</h3>
-                        <div className="grid grid-cols-3 gap-3">
-                            <button onClick={exportPDF} className="flex flex-col items-center justify-center gap-2 p-4 bg-white border border-gray-200 rounded-2xl hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-all shadow-sm">
-                                <Icons.Download size={24} className="text-red-500"/>
-                                <span className="text-xs font-bold text-center">{t.exportPDF}</span>
-                            </button>
-                            
+                        <div className="grid grid-cols-2 gap-3">
                             <button onClick={() => exportWord(resultData, startDate, lang)} className="flex flex-col items-center justify-center gap-2 p-4 bg-white border border-gray-200 rounded-2xl hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition-all shadow-sm">
                                 <Icons.FileText size={24} className="text-blue-500"/>
                                 <span className="text-xs font-bold text-center">{t.exportWord}</span>
                             </button>
-                            
-                            <button onClick={() => exportExcel(resultData, startDate, lang)} className="flex flex-col items-center justify-center gap-2 p-4 bg-white border border-gray-200 rounded-2xl hover:bg-green-50 hover:border-green-200 hover:text-green-600 transition-all shadow-sm">
+                            <button onClick={() => setShowExcelMenu(true)} className="flex flex-col items-center justify-center gap-2 p-4 bg-white border border-gray-200 rounded-2xl hover:bg-green-50 hover:border-green-200 hover:text-green-600 transition-all shadow-sm">
                                 <Icons.FileSpreadsheet size={24} className="text-green-500"/>
                                 <span className="text-xs font-bold text-center">{t.exportExcel}</span>
                             </button>
                         </div>
                     </div>
-
                     <div className="h-10"></div>
                   </div>
                 )}
