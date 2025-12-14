@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AI廚師 by 日本實Q</title>
     
-    <!-- 設定 App Icon (請確保 icon.png 在同一目錄下) -->
+    <!-- 設定 App Icon -->
     <link rel="icon" type="image/png" href="icon.png">
     <link rel="apple-touch-icon" href="icon.png">
     
@@ -19,13 +19,21 @@
     <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+    <!-- Libraries for Export -->
+    <!-- PDF Generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- Excel Generation (SheetJS) -->
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+
     <!-- App Styles -->
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-        /* Safe area for mobile */
         .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+        
+        /* Print/Export Styles */
+        .page-break { page-break-after: always; break-after: page; }
     </style>
 </head>
 <body class="bg-[#F8F9FA]">
@@ -75,7 +83,170 @@
             });
         };
 
-        // --- Icon Components (Inline SVG) ---
+        // --- Helper: Date Formatting ---
+        const getFormatDate = (start, offset, lang) => {
+            const date = new Date(start);
+            date.setDate(date.getDate() + offset);
+            return date.toLocaleDateString(lang === 'zh' ? 'zh-HK' : 'en-US', { 
+              month: 'numeric', 
+              day: 'numeric', 
+              weekday: 'short' 
+            });
+        };
+
+        // --- Export Functions ---
+
+        // 1. Excel Export (One sheet per day)
+        const exportExcel = (data, startDate, lang) => {
+            const wb = XLSX.utils.book_new();
+            
+            data.schedule.forEach((dayPlan, index) => {
+                const dateStr = getFormatDate(startDate, index, lang);
+                const sheetName = `Day ${dayPlan.day}`;
+                
+                // Define headers and data structure
+                const ws_data = [
+                    [`${dateStr} - Day ${dayPlan.day}`],
+                    ["餐點 (Meal)", "菜色 (Dish)", "材料 (Ingredients)", "調味 (Seasoning)", "做法 (Steps)"],
+                ];
+
+                ['breakfast', 'lunch', 'dinner'].forEach(type => {
+                    const meal = dayPlan.meals[type];
+                    if (meal && meal.name) {
+                        ws_data.push([
+                            type.toUpperCase(),
+                            meal.name,
+                            meal.ingredients,
+                            meal.seasoning,
+                            meal.steps
+                        ]);
+                    } else {
+                         ws_data.push([type.toUpperCase(), "N/A", "", "", ""]);
+                    }
+                });
+
+                const ws = XLSX.utils.aoa_to_sheet(ws_data);
+                
+                // Styling width (basic)
+                ws['!cols'] = [{wch:15}, {wch:20}, {wch:30}, {wch:20}, {wch:50}];
+
+                XLSX.utils.book_append_sheet(wb, ws, sheetName);
+            });
+
+            // Summary Sheet
+            const summary_data = [
+                ["類別", "項目"],
+                ["需用食材", ...data.summary.ingredients_list],
+                ["", ""],
+                ["需用調味", ...data.summary.seasonings_list]
+            ];
+            // Since data structures are arrays, let's map them properly
+            const formattedSummary = [
+                ["總覽 Summary"],
+                ["類型 Type", "項目 Item"]
+            ];
+            data.summary.ingredients_list.forEach(item => formattedSummary.push(["食材", item]));
+            data.summary.seasonings_list.forEach(item => formattedSummary.push(["調味", item]));
+            
+            const ws_summary = XLSX.utils.aoa_to_sheet(formattedSummary);
+            XLSX.utils.book_append_sheet(wb, ws_summary, "Summary");
+
+            XLSX.writeFile(wb, "SmartKitchenPlan.xlsx");
+        };
+
+        // 2. Word Export (HTML Blob with page breaks)
+        const exportWord = (data, startDate, lang) => {
+            let htmlContent = `
+                <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+                <head><meta charset='utf-8'><title>Meal Plan</title>
+                <style>
+                    body { font-family: 'Microsoft JhengHei', sans-serif; }
+                    .day-container { page-break-after: always; }
+                    h1 { color: #F97316; }
+                    h2 { background-color: #eee; padding: 5px; }
+                    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+                    td, th { border: 1px solid #ccc; padding: 8px; vertical-align: top; }
+                    th { background-color: #f0f0f0; text-align: left; }
+                </style>
+                </head><body>
+            `;
+
+            data.schedule.forEach((dayPlan, index) => {
+                const dateStr = getFormatDate(startDate, index, lang);
+                htmlContent += `
+                    <div class="day-container">
+                        <h1>${dateStr} (Day ${dayPlan.day})</h1>
+                        <table>
+                            <tr>
+                                <th width="15%">餐點</th>
+                                <th width="20%">菜色</th>
+                                <th width="65%">詳情</th>
+                            </tr>
+                `;
+
+                ['breakfast', 'lunch', 'dinner'].forEach(type => {
+                    const meal = dayPlan.meals[type];
+                    if(meal && meal.name) {
+                        htmlContent += `
+                            <tr>
+                                <td><b>${type.toUpperCase()}</b></td>
+                                <td><b>${meal.name}</b></td>
+                                <td>
+                                    <p><b>材料:</b> ${meal.ingredients}</p>
+                                    <p><b>調味:</b> ${meal.seasoning}</p>
+                                    <p><b>做法:</b><br/>${meal.steps.replace(/\n/g, '<br/>')}</p>
+                                </td>
+                            </tr>
+                        `;
+                    }
+                });
+
+                htmlContent += `</table></div>`;
+            });
+
+            // Summary at the end
+            htmlContent += `
+                <div>
+                    <h1>採購及調味總覽</h1>
+                    <h2>需用食材</h2>
+                    <ul>${data.summary.ingredients_list.map(i => `<li>${i}</li>`).join('')}</ul>
+                    <h2>需用調味</h2>
+                    <ul>${data.summary.seasonings_list.map(i => `<li>${i}</li>`).join('')}</ul>
+                </div>
+                </body></html>
+            `;
+
+            const blob = new Blob([htmlContent], { type: 'application/msword' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'SmartKitchenPlan.doc';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+
+        // 3. PDF Export
+        const exportPDF = () => {
+            const element = document.getElementById('export-container');
+            const opt = {
+                margin: 10,
+                filename: 'SmartKitchenPlan.pdf',
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2 },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+            };
+            // Temporarily show the export container which is usually hidden or styled differently
+            // Actually, we can just print the current Result view but we need to ensure page breaks.
+            // A better way is to construct a hidden div specifically for PDF generation to ensure perfect "One Day One Page"
+            
+            // For simplicity in this React structure, we will target a specific div that we will add class 'pdf-export-mode' to temporarily
+            html2pdf().set(opt).from(element).save();
+        };
+
+
+        // --- Icon Components ---
         const IconBase = ({ children, size = 24, className = "", ...props }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
         );
@@ -104,9 +275,11 @@
             Moon: (p) => <IconBase {...p}><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></IconBase>,
             AtSign: (p) => <IconBase {...p}><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/></IconBase>,
             ExternalLink: (p) => <IconBase {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></IconBase>,
+            FileText: (p) => <IconBase {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></IconBase>,
+            FileSpreadsheet: (p) => <IconBase {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/></IconBase>,
+            Download: (p) => <IconBase {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></IconBase>
         };
 
-        // --- Translation Dictionary ---
         const TRANSLATIONS = {
           zh: {
             title: "AI廚師 by 日本實Q",
@@ -143,6 +316,10 @@
             dinner: "晚餐",
             startDate: "開始日期",
             day: "第 {n} 日",
+            exportTitle: "匯出食譜",
+            exportPDF: "PDF (一日一版)",
+            exportWord: "Word (一日一版)",
+            exportExcel: "Excel (分Sheet)",
             styles: {
               hk: "港式家常",
               thai: "泰式風味",
@@ -189,6 +366,10 @@
             dinner: "Dinner",
             startDate: "Start Date",
             day: "Day {n}",
+            exportTitle: "Export Plan",
+            exportPDF: "PDF (1 Day/Page)",
+            exportWord: "Word (1 Day/Page)",
+            exportExcel: "Excel (Sheets)",
             styles: {
               hk: "HK Style",
               thai: "Thai",
@@ -203,30 +384,25 @@
         };
 
         const App = () => {
-          // --- State Management ---
           const [lang, setLang] = useState('zh');
           const t = TRANSLATIONS[lang]; 
           
           const [apiKey, setApiKey] = useState('');
           const [showSettings, setShowSettings] = useState(false);
           
-          // Photos
           const [ingredientImgs, setIngredientImgs] = useState([]); 
           const [seasoningImgs, setSeasoningImgs] = useState([]); 
           
-          // Configuration
           const [days, setDays] = useState(3);
           const [meals, setMeals] = useState({ breakfast: 3, lunch: 3, dinner: 3 }); 
           const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]); 
           const [selectedCuisines, setSelectedCuisines] = useState(['hk']); 
           
-          // App Logic
           const [loading, setLoading] = useState(false);
           const [resultData, setResultData] = useState(null);
           const [error, setError] = useState(null);
           const [activeTab, setActiveTab] = useState('input'); 
 
-          // --- Effects ---
           useEffect(() => {
             const storedKey = localStorage.getItem('gemini_api_key');
             if (storedKey) setApiKey(storedKey);
@@ -239,7 +415,6 @@
             }
           }, []);
 
-          // Auto-sync meals
           useEffect(() => {
             setMeals({
               breakfast: days,
@@ -248,19 +423,8 @@
             });
           }, [days]);
 
-          // --- Helpers ---
           const toggleLanguage = () => {
             setLang(prev => prev === 'zh' ? 'en' : 'zh');
-          };
-
-          const getFormatDate = (start, offset) => {
-            const date = new Date(start);
-            date.setDate(date.getDate() + offset);
-            return date.toLocaleDateString(lang === 'zh' ? 'zh-HK' : 'en-US', { 
-              month: 'numeric', 
-              day: 'numeric', 
-              weekday: 'short' 
-            });
           };
 
           const toggleCuisine = (styleKey) => {
@@ -274,7 +438,6 @@
             });
           };
 
-          // --- Handlers ---
           const saveApiKey = (key) => {
             setApiKey(key);
             localStorage.setItem('gemini_api_key', key);
@@ -286,7 +449,6 @@
             if (files.length === 0) return;
             const MAX_IMAGES = 5;
 
-            // Use the compressImage function for each file
             const compressedImages = [];
             for (const file of files) {
                 try {
@@ -302,7 +464,6 @@
             } else {
               setSeasoningImgs(prev => {
                  const newImgs = [...prev, ...compressedImages].slice(0, MAX_IMAGES);
-                 // Safely store in localStorage
                  try {
                      localStorage.setItem('seasoning_imgs', JSON.stringify(newImgs));
                  } catch (e) {
@@ -419,7 +580,7 @@
             }
           };
 
-          // --- UI Components ---
+          // --- Components ---
           const PhotoUploader = ({ title, images, onUpload, onRemove, type }) => (
             <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm">
                 <div className="flex justify-between items-center mb-4">
@@ -499,17 +660,19 @@
                           <p className="text-[10px] text-gray-400 font-bold mb-0.5">{t.flavor}</p>
                           <p className="text-xs text-gray-700 leading-snug">{data.seasoning}</p>
                       </div>
+                      
+                      {/* Updated: Steps are always visible */}
+                      {data.steps && (
+                          <div className="mt-2 pt-2 border-t border-gray-100">
+                             <p className="text-[10px] text-gray-400 font-bold mb-1 flex items-center gap-1">
+                                {t.steps}
+                             </p>
+                             <p className="text-[10px] text-gray-600 bg-gray-50 p-2 rounded-lg leading-relaxed whitespace-pre-wrap">
+                                 {data.steps}
+                             </p>
+                          </div>
+                      )}
                   </div>
-                  {data.steps && (
-                      <details className="mt-2 group">
-                          <summary className="text-[10px] text-gray-400 cursor-pointer list-none flex items-center gap-1 hover:text-gray-600">
-                              <Icons.ChevronDown size={10} className="group-open:rotate-180 transition-transform"/> {t.steps}
-                          </summary>
-                          <p className="text-[10px] text-gray-600 mt-1 pl-1 border-l-2 border-gray-200 leading-relaxed whitespace-pre-wrap">
-                              {data.steps}
-                          </p>
-                      </details>
-                  )}
               </div>
             );
           };
@@ -550,7 +713,7 @@
                   <div className="flex flex-col">
                       <h1 className="text-lg font-extrabold text-gray-800 leading-tight">{t.title}</h1>
                       <a 
-                        href="https://www.threads.net/@________156.4" 
+                        href="https://www.threads.net/@replace_with_your_id" 
                         target="_blank" 
                         rel="noreferrer"
                         className="text-[10px] text-gray-500 flex items-center gap-1 hover:text-blue-500 transition-colors mt-0.5"
@@ -656,19 +819,20 @@
                 )}
 
                 {activeTab === 'result' && resultData && (
-                  <div className="animate-in fade-in duration-500 space-y-8">
+                  <div className="animate-in fade-in duration-500 space-y-8" id="export-container">
                     <div className="flex items-center justify-between">
                         <h2 className="text-2xl font-bold text-gray-800">{t.planTitle}</h2>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2" data-html2canvas-ignore>
                             <button onClick={() => setActiveTab('input')} className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-600 shadow-sm">{t.modify}</button>
                             <button onClick={generateRecipes} className="px-4 py-2 bg-gray-900 text-white rounded-xl text-sm font-bold shadow-md">{t.regenerate}</button>
                         </div>
                     </div>
+                    
                     <div className="space-y-6">
                         {resultData.schedule.map((dayPlan, index) => (
-                            <div key={index} className="space-y-2">
-                                <div className="flex items-center gap-2 px-1">
-                                    <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-lg text-sm font-bold shadow-sm">{getFormatDate(startDate, index)}</span>
+                            <div key={index} className="space-y-2 page-break">
+                                <div className="flex items-center gap-2 px-1 pt-4">
+                                    <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-lg text-sm font-bold shadow-sm">{getFormatDate(startDate, index, lang)}</span>
                                     <div className="h-px bg-gray-200 flex-1"></div>
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -679,7 +843,8 @@
                             </div>
                         ))}
                     </div>
-                    <div className="bg-white rounded-3xl p-6 border border-gray-200 shadow-sm mt-8">
+
+                    <div className="bg-white rounded-3xl p-6 border border-gray-200 shadow-sm mt-8 page-break">
                         <div className="flex items-center gap-2 mb-6 border-b border-gray-100 pb-4">
                             <Icons.List className="text-gray-400"/>
                             <h3 className="text-lg font-bold text-gray-800">{t.summaryTitle}</h3>
@@ -699,6 +864,28 @@
                             </div>
                         </div>
                     </div>
+
+                    {/* EXPORT BUTTONS ROW */}
+                    <div className="py-6 flex flex-col gap-4 border-t border-gray-100 mt-6" data-html2canvas-ignore>
+                        <h3 className="text-center text-sm font-bold text-gray-400 uppercase tracking-widest">{t.exportTitle}</h3>
+                        <div className="grid grid-cols-3 gap-3">
+                            <button onClick={exportPDF} className="flex flex-col items-center justify-center gap-2 p-4 bg-white border border-gray-200 rounded-2xl hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-all shadow-sm">
+                                <Icons.Download size={24} className="text-red-500"/>
+                                <span className="text-xs font-bold text-center">{t.exportPDF}</span>
+                            </button>
+                            
+                            <button onClick={() => exportWord(resultData, startDate, lang)} className="flex flex-col items-center justify-center gap-2 p-4 bg-white border border-gray-200 rounded-2xl hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600 transition-all shadow-sm">
+                                <Icons.FileText size={24} className="text-blue-500"/>
+                                <span className="text-xs font-bold text-center">{t.exportWord}</span>
+                            </button>
+                            
+                            <button onClick={() => exportExcel(resultData, startDate, lang)} className="flex flex-col items-center justify-center gap-2 p-4 bg-white border border-gray-200 rounded-2xl hover:bg-green-50 hover:border-green-200 hover:text-green-600 transition-all shadow-sm">
+                                <Icons.FileSpreadsheet size={24} className="text-green-500"/>
+                                <span className="text-xs font-bold text-center">{t.exportExcel}</span>
+                            </button>
+                        </div>
+                    </div>
+
                     <div className="h-10"></div>
                   </div>
                 )}
