@@ -1,0 +1,737 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Camera, Settings, ChefHat, Save, Trash2, Utensils, Clock, ChevronDown, ChevronUp, AlertCircle, Loader2, ArrowRight, BookOpen, Image as ImageIcon, Plus, X, List, Globe, Sun, Coffee, Moon, AtSign, ExternalLink } from 'lucide-react';
+
+// --- Translation Dictionary ---
+const TRANSLATIONS = {
+  zh: {
+    title: "AI廚師 by 日本實Q",
+    threadsLinkText: "撳呢度 Follow 我嘅 Threads",
+    uploadPhotos: "上載相片",
+    ingredientsReceipt: "食材 / 收據",
+    seasoning: "調味料",
+    onePhoto: "影一張",
+    album: "相簿多張",
+    clear: "清空",
+    settings: "設定",
+    daysLabel: "計劃日數",
+    mealsLabel: "餐數微調",
+    cuisineStyle: "口味風格 (可多選)",
+    generate: "生成食譜 Grid",
+    analyzing: "正在分析食材...",
+    planTitle: "食譜規劃",
+    modify: "修改",
+    regenerate: "重整",
+    summaryTitle: "食材及調味料總覽",
+    needIngredients: "需用食材",
+    needSeasonings: "需用調味",
+    steps: "做法步驟",
+    ingredients: "材料",
+    flavor: "調味",
+    apiKeyPlaceholder: "請輸入 Gemini API Key...",
+    save: "儲存",
+    cancel: "取消",
+    apiKeyNote: "Key 只會儲存於本地裝置。",
+    errorKey: "請先喺右上角設定輸入 Gemini API Key",
+    errorImg: "請先影或者上載食材/收據相片",
+    breakfast: "早餐",
+    lunch: "午餐",
+    dinner: "晚餐",
+    startDate: "開始日期",
+    day: "第 {n} 日",
+    styles: {
+      hk: "港式家常",
+      thai: "泰式風味",
+      jp: "日式料理",
+      western: "西式/意式",
+      spicy: "川辣風味",
+      healthy: "健康低脂",
+      korean: "韓式",
+      fusion: "創意融合"
+    }
+  },
+  en: {
+    title: "AI Chef by Japan Real Q",
+    threadsLinkText: "Follow me on Threads",
+    uploadPhotos: "Upload Photos",
+    ingredientsReceipt: "Ingredients / Receipt",
+    seasoning: "Seasonings",
+    onePhoto: "Camera",
+    album: "Gallery",
+    clear: "Clear",
+    settings: "Settings",
+    daysLabel: "Total Days",
+    mealsLabel: "Meal Counts",
+    cuisineStyle: "Cuisine Style (Multi-select)",
+    generate: "Generate Plan",
+    analyzing: "Analyzing...",
+    planTitle: "Meal Plan",
+    modify: "Edit",
+    regenerate: "Regenerate",
+    summaryTitle: "Shopping & Pantry List",
+    needIngredients: "Ingredients Needed",
+    needSeasonings: "Seasonings Needed",
+    steps: "Instructions",
+    ingredients: "Items",
+    flavor: "Seasoning",
+    apiKeyPlaceholder: "Enter Gemini API Key...",
+    save: "Save",
+    cancel: "Cancel",
+    apiKeyNote: "Key is stored locally on your device.",
+    errorKey: "Please enter Gemini API Key in Settings first",
+    errorImg: "Please upload ingredient/receipt photos first",
+    breakfast: "Breakfast",
+    lunch: "Lunch",
+    dinner: "Dinner",
+    startDate: "Start Date",
+    day: "Day {n}",
+    styles: {
+      hk: "HK Style",
+      thai: "Thai",
+      jp: "Japanese",
+      western: "Western",
+      spicy: "Sichuan Spicy",
+      healthy: "Healthy/Low Fat",
+      korean: "Korean",
+      fusion: "Fusion"
+    }
+  }
+};
+
+const App = () => {
+  // --- State Management ---
+  const [lang, setLang] = useState('zh'); // 'zh' or 'en'
+  const t = TRANSLATIONS[lang]; 
+  
+  const [apiKey, setApiKey] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // Photos
+  const [ingredientImgs, setIngredientImgs] = useState([]); 
+  const [seasoningImgs, setSeasoningImgs] = useState([]); 
+  
+  // Configuration
+  const [days, setDays] = useState(3);
+  const [meals, setMeals] = useState({ breakfast: 3, lunch: 3, dinner: 3 }); // Init with 3 matches days
+  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]); 
+  const [selectedCuisines, setSelectedCuisines] = useState(['hk']); 
+  
+  // App Logic
+  const [loading, setLoading] = useState(false);
+  const [resultData, setResultData] = useState(null);
+  const [error, setError] = useState(null);
+  const [activeTab, setActiveTab] = useState('input'); 
+
+  // --- Effects ---
+  useEffect(() => {
+    const storedKey = localStorage.getItem('gemini_api_key');
+    if (storedKey) setApiKey(storedKey);
+
+    const storedSeasonings = localStorage.getItem('seasoning_imgs');
+    if (storedSeasonings) {
+        try {
+            setSeasoningImgs(JSON.parse(storedSeasonings));
+        } catch (e) { console.error(e); }
+    }
+  }, []);
+
+  // Auto-sync meals when "Total Days" changes
+  useEffect(() => {
+    setMeals({
+      breakfast: days,
+      lunch: days,
+      dinner: days
+    });
+  }, [days]);
+
+  // --- Helpers ---
+  const toggleLanguage = () => {
+    setLang(prev => prev === 'zh' ? 'en' : 'zh');
+  };
+
+  const getFormatDate = (start, offset) => {
+    const date = new Date(start);
+    date.setDate(date.getDate() + offset);
+    return date.toLocaleDateString(lang === 'zh' ? 'zh-HK' : 'en-US', { 
+      month: 'numeric', 
+      day: 'numeric', 
+      weekday: 'short' 
+    });
+  };
+
+  const toggleCuisine = (styleKey) => {
+    setSelectedCuisines(prev => {
+      if (prev.includes(styleKey)) {
+        if (prev.length === 1) return prev;
+        return prev.filter(k => k !== styleKey);
+      } else {
+        return [...prev, styleKey];
+      }
+    });
+  };
+
+  // --- Handlers ---
+  const saveApiKey = (key) => {
+    setApiKey(key);
+    localStorage.setItem('gemini_api_key', key);
+    setShowSettings(false);
+  };
+
+  const handleImageUpload = (e, type) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
+    const MAX_IMAGES = 5;
+
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result;
+        if (type === 'ingredient') {
+          setIngredientImgs(prev => [...prev, base64String].slice(0, MAX_IMAGES));
+        } else {
+          setSeasoningImgs(prev => {
+             const newImgs = [...prev, base64String].slice(0, MAX_IMAGES);
+             localStorage.setItem('seasoning_imgs', JSON.stringify(newImgs));
+             return newImgs;
+          });
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeImage = (type, index) => {
+      if (type === 'ingredient') {
+          setIngredientImgs(prev => prev.filter((_, i) => i !== index));
+      } else {
+          setSeasoningImgs(prev => {
+              const newImgs = prev.filter((_, i) => i !== index);
+              localStorage.setItem('seasoning_imgs', JSON.stringify(newImgs));
+              return newImgs;
+          });
+      }
+  };
+
+  const clearSeasonings = () => {
+    setSeasoningImgs([]);
+    localStorage.removeItem('seasoning_imgs');
+  };
+
+  const generateRecipes = async () => {
+    if (!apiKey) {
+      setError(t.errorKey);
+      setShowSettings(true);
+      return;
+    }
+    if (ingredientImgs.length === 0) {
+      setError(t.errorImg);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setResultData(null);
+
+    const styleNames = selectedCuisines.map(key => t.styles[key]).join(', ');
+    const languageInstruction = lang === 'zh' ? '用繁體中文(廣東話口語風格)' : 'in English';
+
+    try {
+      const prompt = `
+        You are a professional chef. Plan meals based on the provided images (ingredients/receipts first, then pantry/seasonings).
+        
+        【Constraints】:
+        - Total Span: ${days} days
+        - Actual Meal Counts Needed: 
+          - Breakfast: ${meals.breakfast} portions
+          - Lunch: ${meals.lunch} portions
+          - Dinner: ${meals.dinner} portions
+        - Cuisine Styles: ${styleNames}
+        - **Language**: Output strictly ${languageInstruction}.
+        
+        【Output Format】:
+        **Strictly JSON only**. No Markdown blocks.
+        
+        Structure:
+        {
+          "summary": {
+            "ingredients_list": ["Item 1", "Item 2"],
+            "seasonings_list": ["Item 1", "Item 2"]
+          },
+          "schedule": [
+            {
+              "day": 1,
+              "meals": {
+                "breakfast": { "name": "...", "ingredients": "...", "seasoning": "...", "steps": "..." }, // If count is 0, this can be null or empty object
+                "lunch": { "name": "...", "ingredients": "...", "seasoning": "...", "steps": "..." },
+                "dinner": { "name": "...", "ingredients": "...", "seasoning": "...", "steps": "..." }
+              }
+            }
+          ]
+        }
+        
+        Note: If a specific meal type count is 0 or exhausted for a day, leave that meal slot empty/null in the JSON.
+        Make sure quantities are precise (grams, tbsp, tsp).
+      `;
+
+      const imageParts = [...ingredientImgs, ...seasoningImgs].map(img => ({
+          inlineData: { mimeType: "image/jpeg", data: img.split(',')[1] }
+      }));
+
+      const contents = [{
+          role: "user",
+          parts: [{ text: prompt }, ...imageParts]
+      }];
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents, generationConfig: { responseMimeType: "application/json" } })
+      });
+
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
+
+      let textResponse = data.candidates[0].content.parts[0].text;
+      textResponse = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+      
+      const parsedData = JSON.parse(textResponse);
+      setResultData(parsedData);
+      setActiveTab('result');
+
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Error generating recipes");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --- Components ---
+
+  const PhotoUploader = ({ title, images, onUpload, onRemove, type }) => (
+    <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm">
+        <div className="flex justify-between items-center mb-4">
+            <h3 className="font-bold text-gray-700 flex items-center gap-2">
+                {type === 'ingredient' ? <Utensils size={18}/> : <Save size={18}/>}
+                {title}
+                <span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{images.length}</span>
+            </h3>
+            {images.length > 0 && type === 'seasoning' && (
+                <button onClick={clearSeasonings} className="text-red-400 text-xs flex items-center gap-1 hover:text-red-600">
+                    <Trash2 size={12}/> {t.clear}
+                </button>
+            )}
+        </div>
+        <div className="flex gap-3 mb-4">
+            <label className="flex-1 cursor-pointer group">
+                <input type="file" accept="image/*" capture="environment" onChange={(e) => onUpload(e, type, false)} className="hidden" />
+                <div className="h-24 rounded-2xl bg-orange-50 border-2 border-dashed border-orange-200 flex flex-col items-center justify-center gap-2 text-orange-600 group-active:scale-95 transition-all">
+                    <Camera size={24} />
+                    <span className="text-xs font-bold">{t.onePhoto}</span>
+                </div>
+            </label>
+            <label className="flex-1 cursor-pointer group">
+                <input type="file" accept="image/*" multiple onChange={(e) => onUpload(e, type, true)} className="hidden" />
+                <div className="h-24 rounded-2xl bg-blue-50 border-2 border-dashed border-blue-200 flex flex-col items-center justify-center gap-2 text-blue-600 group-active:scale-95 transition-all">
+                    <ImageIcon size={24} />
+                    <span className="text-xs font-bold">{t.album}</span>
+                </div>
+            </label>
+        </div>
+        {images.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                {images.map((img, idx) => (
+                    <div key={idx} className="relative flex-shrink-0 w-20 h-20 rounded-xl overflow-hidden border border-gray-200 shadow-sm">
+                        <img src={img} alt="preview" className="w-full h-full object-cover" />
+                        <button onClick={() => onRemove(type, idx)} className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1 hover:bg-red-500 transition-colors">
+                            <X size={12} />
+                        </button>
+                    </div>
+                ))}
+            </div>
+        )}
+    </div>
+  );
+
+  const MealCard = ({ mealType, data }) => {
+    // If data is null/empty for this slot (e.g. user set 0 breakfasts), show placeholder
+    if (!data || !data.name) return (
+      <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 border-dashed h-full flex flex-col items-center justify-center opacity-50">
+         <div className="text-gray-300 mb-1">
+             {mealType === 'breakfast' && <Sun size={24}/>}
+             {mealType === 'lunch' && <Coffee size={24}/>}
+             {mealType === 'dinner' && <Moon size={24}/>}
+         </div>
+         <span className="text-xs text-gray-400">No Meal</span>
+      </div>
+    );
+
+    return (
+      <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow h-full flex flex-col">
+          <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-50">
+              <span className="text-lg">
+                  {mealType === 'breakfast' && '🌞'}
+                  {mealType === 'lunch' && '🍱'}
+                  {mealType === 'dinner' && '🌙'}
+              </span>
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">
+                  {t[mealType]}
+              </span>
+          </div>
+          <h4 className="font-bold text-gray-800 text-sm mb-2 line-clamp-2 min-h-[2.5rem]">{data.name}</h4>
+          <div className="flex-1 space-y-2">
+              <div className="bg-orange-50 p-2 rounded-lg">
+                  <p className="text-[10px] text-gray-400 font-bold mb-0.5">{t.ingredients}</p>
+                  <p className="text-xs text-gray-700 leading-snug">{data.ingredients}</p>
+              </div>
+              <div className="bg-green-50 p-2 rounded-lg">
+                  <p className="text-[10px] text-gray-400 font-bold mb-0.5">{t.flavor}</p>
+                  <p className="text-xs text-gray-700 leading-snug">{data.seasoning}</p>
+              </div>
+          </div>
+          {data.steps && (
+              <details className="mt-2 group">
+                  <summary className="text-[10px] text-gray-400 cursor-pointer list-none flex items-center gap-1 hover:text-gray-600">
+                      <ChevronDown size={10} className="group-open:rotate-180 transition-transform"/> {t.steps}
+                  </summary>
+                  <p className="text-[10px] text-gray-600 mt-1 pl-1 border-l-2 border-gray-200 leading-relaxed whitespace-pre-wrap">
+                      {data.steps}
+                  </p>
+              </details>
+          )}
+      </div>
+    );
+  };
+
+  const MiniCounter = ({ icon, label, value, setter }) => (
+      <div className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+          <div className="flex items-center gap-2 text-gray-600">
+              {icon}
+              <span className="text-xs font-bold">{label}</span>
+          </div>
+          <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setter(Math.max(0, value - 1))}
+                className="w-6 h-6 rounded-md bg-gray-100 flex items-center justify-center hover:bg-gray-200 text-gray-500"
+              >
+                  <ChevronDown size={14} />
+              </button>
+              <span className="w-4 text-center text-sm font-bold text-gray-800">{value}</span>
+              <button 
+                onClick={() => setter(value + 1)}
+                className="w-6 h-6 rounded-md bg-orange-100 flex items-center justify-center hover:bg-orange-200 text-orange-600"
+              >
+                  <ChevronUp size={14} />
+              </button>
+          </div>
+      </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-[#F8F9FA] font-sans text-gray-900 pb-28">
+      
+      {/* Header */}
+      <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-gray-200 px-5 py-3 flex justify-between items-start gap-3 shadow-sm">
+        <div className="flex items-start gap-3 flex-1">
+          <div className="bg-gradient-to-tr from-orange-500 to-red-500 p-2 rounded-xl shadow-lg shadow-orange-200 mt-1">
+            <ChefHat className="text-white" size={20} />
+          </div>
+          <div className="flex flex-col">
+              <h1 className="text-lg font-extrabold text-gray-800 leading-tight">{t.title}</h1>
+              <a 
+                href="https://www.threads.net/@________156.4" 
+                target="_blank" 
+                rel="noreferrer"
+                className="text-[10px] text-gray-500 flex items-center gap-1 hover:text-blue-500 transition-colors mt-0.5"
+              >
+                <AtSign size={10} /> {t.threadsLinkText} <ExternalLink size={8} />
+              </a>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+            <button 
+                onClick={toggleLanguage} 
+                className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
+                title="Switch Language"
+            >
+                <Globe size={22} />
+            </button>
+            <button onClick={() => setShowSettings(true)} className="p-2 text-gray-400 hover:bg-gray-100 rounded-full">
+                <Settings size={22} />
+            </button>
+        </div>
+      </header>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">{t.settings}</h2>
+            
+            <div className="space-y-4">
+                {/* Date Picker */}
+                <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-1">{t.startDate}</label>
+                    <input 
+                        type="date" 
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-orange-500"
+                    />
+                </div>
+
+                {/* API Key */}
+                <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-1">API Key</label>
+                    <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={t.apiKeyPlaceholder}
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500 outline-none"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">{t.apiKeyNote}</p>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                    <button onClick={() => setShowSettings(false)} className="py-3 bg-gray-100 text-gray-700 rounded-xl font-bold">{t.cancel}</button>
+                    <button onClick={() => saveApiKey(apiKey)} className="py-3 bg-gray-900 text-white rounded-xl font-bold">{t.save}</button>
+                </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <main className="p-4 max-w-4xl mx-auto space-y-6">
+        
+        {error && (
+          <div className="bg-red-50 text-red-600 p-4 rounded-2xl flex items-center gap-3 text-sm font-medium border border-red-100">
+            <AlertCircle size={18} /> {error}
+          </div>
+        )}
+
+        {/* INPUT TAB */}
+        {activeTab === 'input' && (
+          <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+            
+            {/* 1. Photos Section */}
+            <div className="space-y-4">
+                <div className="flex items-center gap-2 px-1">
+                    <span className="w-6 h-6 rounded-full bg-gray-900 text-white text-xs flex items-center justify-center font-bold">1</span>
+                    <h2 className="text-sm font-bold text-gray-500 uppercase">{t.uploadPhotos}</h2>
+                </div>
+                
+                <PhotoUploader title={t.ingredientsReceipt} type="ingredient" images={ingredientImgs} onUpload={handleImageUpload} onRemove={removeImage} />
+                <PhotoUploader title={t.seasoning} type="seasoning" images={seasoningImgs} onUpload={handleImageUpload} onRemove={removeImage} />
+            </div>
+
+            {/* 2. Config Section (Split Layout) */}
+            <div className="space-y-4">
+                <div className="flex items-center gap-2 px-1">
+                    <span className="w-6 h-6 rounded-full bg-gray-900 text-white text-xs flex items-center justify-center font-bold">2</span>
+                    <h2 className="text-sm font-bold text-gray-500 uppercase">{t.settings}</h2>
+                </div>
+                
+                {/* SPLIT LAYOUT FOR CONFIG */}
+                <div className="flex gap-4">
+                    
+                    {/* LEFT: Main Days Control */}
+                    <div className="flex-1 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col items-center justify-center gap-3">
+                        <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">{t.daysLabel}</span>
+                        <div className="flex items-center gap-4">
+                            <button 
+                                onClick={() => setDays(Math.max(1, days - 1))} 
+                                className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center hover:bg-gray-200 text-gray-600 transition-colors"
+                            >
+                                <ChevronDown size={20} />
+                            </button>
+                            <span className="text-4xl font-extrabold text-gray-800 w-12 text-center">{days}</span>
+                            <button 
+                                onClick={() => setDays(days + 1)} 
+                                className="w-10 h-10 rounded-xl bg-gray-900 text-white flex items-center justify-center hover:bg-gray-800 shadow-md transition-colors"
+                            >
+                                <ChevronUp size={20} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* RIGHT: Meal Breakdown Controls */}
+                    <div className="flex-1 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-center">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2 block">{t.mealsLabel}</span>
+                        <div className="space-y-1">
+                            <MiniCounter 
+                                icon={<Sun size={14} className="text-orange-400"/>} 
+                                label={t.breakfast} 
+                                value={meals.breakfast} 
+                                setter={(v) => setMeals({...meals, breakfast: v})} 
+                            />
+                            <MiniCounter 
+                                icon={<Coffee size={14} className="text-yellow-600"/>} 
+                                label={t.lunch} 
+                                value={meals.lunch} 
+                                setter={(v) => setMeals({...meals, lunch: v})} 
+                            />
+                            <MiniCounter 
+                                icon={<Moon size={14} className="text-indigo-400"/>} 
+                                label={t.dinner} 
+                                value={meals.dinner} 
+                                setter={(v) => setMeals({...meals, dinner: v})} 
+                            />
+                        </div>
+                    </div>
+                </div>
+                
+                {/* Cuisine Style */}
+                <div className="p-5 bg-white rounded-2xl border border-gray-100 shadow-sm">
+                    <span className="text-gray-700 font-bold mb-4 block">{t.cuisineStyle}</span>
+                    <div className="flex flex-wrap gap-2">
+                        {Object.keys(t.styles).map(key => {
+                            const isSelected = selectedCuisines.includes(key);
+                            return (
+                                <button
+                                    key={key}
+                                    onClick={() => toggleCuisine(key)}
+                                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                                        isSelected 
+                                        ? 'bg-orange-500 text-white shadow-md ring-2 ring-orange-200' 
+                                        : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
+                                    }`}
+                                >
+                                    {t.styles[key]} {isSelected && '✓'}
+                                </button>
+                            )
+                        })}
+                    </div>
+                </div>
+            </div>
+
+            {/* Generate Button */}
+            <button
+                onClick={generateRecipes}
+                disabled={loading}
+                className={`w-full py-5 rounded-2xl text-xl font-bold shadow-xl flex items-center justify-center gap-3 transition-all mt-4 ${
+                  loading 
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                  : 'bg-gray-900 text-white hover:scale-[1.01] active:scale-[0.99] shadow-orange-100'
+                }`}
+            >
+                {loading ? <Loader2 className="animate-spin" /> : <Utensils />}
+                {loading ? t.analyzing : t.generate}
+            </button>
+          </div>
+        )}
+
+        {/* RESULT TAB (The Grid) */}
+        {activeTab === 'result' && resultData && (
+          <div className="animate-in fade-in duration-500 space-y-8">
+            
+            {/* Header Area */}
+            <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold text-gray-800">{t.planTitle}</h2>
+                <div className="flex gap-2">
+                    <button onClick={() => setActiveTab('input')} className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-600 shadow-sm">
+                        {t.modify}
+                    </button>
+                    <button onClick={generateRecipes} className="px-4 py-2 bg-gray-900 text-white rounded-xl text-sm font-bold shadow-md">
+                        {t.regenerate}
+                    </button>
+                </div>
+            </div>
+
+            {/* THE GRID */}
+            <div className="space-y-6">
+                {resultData.schedule.map((dayPlan, index) => (
+                    <div key={index} className="space-y-2">
+                        {/* Day Header with Actual Date */}
+                        <div className="flex items-center gap-2 px-1">
+                            <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-lg text-sm font-bold shadow-sm">
+                                {getFormatDate(startDate, index)}
+                            </span>
+                            <div className="h-px bg-gray-200 flex-1"></div>
+                        </div>
+
+                        {/* 3-Column Grid for Meals */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <MealCard mealType="breakfast" data={dayPlan.meals.breakfast} />
+                            <MealCard mealType="lunch" data={dayPlan.meals.lunch} />
+                            <MealCard mealType="dinner" data={dayPlan.meals.dinner} />
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {/* BOTTOM SUMMARY LIST */}
+            <div className="bg-white rounded-3xl p-6 border border-gray-200 shadow-sm mt-8">
+                <div className="flex items-center gap-2 mb-6 border-b border-gray-100 pb-4">
+                    <List className="text-gray-400"/>
+                    <h3 className="text-lg font-bold text-gray-800">{t.summaryTitle}</h3>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {/* Ingredients List */}
+                    <div>
+                        <h4 className="text-sm font-bold text-gray-500 uppercase mb-3 flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-orange-500"></div> {t.needIngredients}
+                        </h4>
+                        <div className="bg-orange-50/50 rounded-xl p-4">
+                            <ul className="space-y-2">
+                                {resultData.summary.ingredients_list.map((item, idx) => (
+                                    <li key={idx} className="text-sm text-gray-700 flex items-start gap-2">
+                                        <span className="text-orange-400 mt-1">•</span> {item}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    </div>
+
+                    {/* Seasonings List */}
+                    <div>
+                        <h4 className="text-sm font-bold text-gray-500 uppercase mb-3 flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-green-500"></div> {t.needSeasonings}
+                        </h4>
+                        <div className="bg-green-50/50 rounded-xl p-4">
+                             <ul className="space-y-2">
+                                {resultData.summary.seasonings_list.map((item, idx) => (
+                                    <li key={idx} className="text-sm text-gray-700 flex items-start gap-2">
+                                        <span className="text-green-400 mt-1">•</span> {item}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div className="h-10"></div>
+          </div>
+        )}
+
+      </main>
+
+      {/* Bottom Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-6 py-3 flex justify-around items-center z-40 pb-safe">
+        <button 
+          onClick={() => setActiveTab('input')}
+          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === 'input' ? 'text-orange-600' : 'text-gray-300'}`}
+        >
+          <Camera size={24} strokeWidth={activeTab === 'input' ? 2.5 : 2} />
+          <span className="text-[10px] font-bold">{t.uploadPhotos}</span>
+        </button>
+
+        <div className="w-px h-8 bg-gray-100"></div>
+
+        <button 
+          onClick={() => resultData && setActiveTab('result')}
+          disabled={!resultData}
+          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === 'result' ? 'text-orange-600' : 'text-gray-300'}`}
+        >
+          <BookOpen size={24} strokeWidth={activeTab === 'result' ? 2.5 : 2} />
+          <span className="text-[10px] font-bold">Grid</span>
+        </button>
+      </nav>
+
+    </div>
+  );
+};
+
+export default App;
